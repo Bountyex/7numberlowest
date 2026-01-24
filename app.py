@@ -17,36 +17,65 @@ if uploaded_file is None:
     st.stop()
 
 # =========================================================
-# READ + CLEAN
+# READ + CLEAN COLUMNS
 # =========================================================
 df = pd.read_excel(uploaded_file)
-df.columns = df.columns.astype(str).str.strip()
+df.columns = (
+    df.columns.astype(str)
+    .str.replace(r"\s+", " ", regex=True)
+    .str.strip()
+)
 
-numbers_col = "Selected Number"
-if numbers_col not in df.columns:
-    st.error(f"❌ Column '{numbers_col}' not found")
-    st.write("Found:", df.columns.tolist())
+# =========================================================
+# AUTO-DETECT NUMBERS COLUMN
+# =========================================================
+possible_cols = [
+    c for c in df.columns
+    if ("selected" in c.lower())
+    or ("number" in c.lower())
+    or ("ticket" in c.lower())
+]
+
+if not possible_cols:
+    st.error("❌ No column with ticket numbers found.")
+    st.write("📌 Columns found:", df.columns.tolist())
     st.stop()
 
+numbers_col = possible_cols[0]
+st.success(f"✅ Using column: {numbers_col}")
+
 # =========================================================
-# PARSE TICKETS
+# PARSE TICKETS (ROBUST)
 # =========================================================
 def parse_ticket(x):
+    if pd.isna(x):
+        return None
     try:
-        t = tuple(sorted(map(int, str(x).split(","))))
-        if len(t) == 7 and all(1 <= n <= 37 for n in t):
-            return t
+        s = str(x).replace(";", ",")
+        nums = []
+        for p in s.split(","):
+            p = p.strip()
+            if p.isdigit():
+                nums.append(int(p))
+            else:
+                d = "".join(ch for ch in p if ch.isdigit())
+                if d:
+                    nums.append(int(d))
+        nums = sorted(set(nums))
+        if len(nums) == 7 and all(1 <= n <= 37 for n in nums):
+            return tuple(nums)
     except:
         pass
     return None
 
 tickets = df[numbers_col].dropna().apply(parse_ticket).dropna().tolist()
 n = len(tickets)
+
 if n == 0:
-    st.error("No valid tickets")
+    st.error("❌ No valid 7-number tickets found.")
     st.stop()
 
-st.success(f"Loaded {n} tickets")
+st.success(f"🎟️ Loaded {n} valid tickets")
 
 # =========================================================
 # CACHED INDICATOR MATRIX
@@ -66,7 +95,7 @@ ind = build_indicator(tickets)
 payout = np.array([0, 0, 0, 15, 1000, 4000, 10000, 100000], dtype=np.int64)
 
 # =========================================================
-# FAST SCORER (DOT PRODUCT)
+# FAST SCORER
 # =========================================================
 def score_candidate(mask):
     counts = ind @ mask
@@ -79,7 +108,7 @@ freq = ind.sum(axis=0)
 low_nums = np.argsort(freq)[:14]
 
 # =========================================================
-# NEIGHBOR MOVE (NO ALLOCATIONS)
+# NEIGHBOR MOVE
 # =========================================================
 def neighbor(mask):
     new = mask.copy()
@@ -90,7 +119,7 @@ def neighbor(mask):
     return new
 
 # =========================================================
-# SIMULATED ANNEALING (FAST)
+# SIMULATED ANNEALING
 # =========================================================
 def fast_sa(mask, iters=1500, t0=5.0):
     best = curr = mask
@@ -130,7 +159,7 @@ candidates.append(make_mask(low_nums[:7]))
 # RUN
 # =========================================================
 if st.button("🚀 Run Fast Optimization"):
-    st.info("Optimizing…")
+    st.info("⏳ Optimizing…")
 
     bar = st.progress(0)
     heap = []
@@ -160,7 +189,7 @@ if st.button("🚀 Run Fast Optimization"):
     # =====================================================
     # DISPLAY
     # =====================================================
-    st.subheader("🏆 Top 10 Lowest-Payout Results")
+    st.subheader("🏆 Top 10 Lowest-Payout Combinations")
 
     for s, m in results:
         combo = tuple(np.where(m == 1)[0] + 1)
@@ -172,6 +201,6 @@ if st.button("🚀 Run Fast Optimization"):
     counts = ind @ best_m
     uniq, cnt = np.unique(counts, return_counts=True)
 
-    st.subheader("📊 Breakdown")
+    st.subheader("📊 Match Breakdown")
     st.write(dict(zip(uniq.astype(int), cnt.astype(int))))
-    st.success(f"🔥 Best: {best_combo} → ₹{best_s:,}")
+    st.success(f"🔥 Best Combination: {best_combo} → ₹{best_s:,}")
