@@ -45,7 +45,7 @@ numbers_col = possible_cols[0]
 st.success(f"✅ Using column: {numbers_col}")
 
 # =========================================================
-# PARSE TICKETS (ROBUST)
+# PARSE TICKETS
 # =========================================================
 def parse_ticket(x):
     if pd.isna(x):
@@ -78,7 +78,7 @@ if n == 0:
 st.success(f"🎟️ Loaded {n} valid tickets")
 
 # =========================================================
-# CACHED INDICATOR MATRIX
+# INDICATOR MATRIX (CACHED)
 # =========================================================
 @st.cache_data(show_spinner=False)
 def build_indicator(tickets):
@@ -95,7 +95,7 @@ ind = build_indicator(tickets)
 payout = np.array([0, 0, 0, 15, 1000, 4000, 10000, 100000], dtype=np.int64)
 
 # =========================================================
-# FAST SCORER
+# SCORER
 # =========================================================
 def score_candidate(mask):
     counts = ind @ mask
@@ -108,7 +108,7 @@ freq = ind.sum(axis=0)
 low_nums = np.argsort(freq)[:14]
 
 # =========================================================
-# NEIGHBOR MOVE
+# NEIGHBOR
 # =========================================================
 def neighbor(mask):
     new = mask.copy()
@@ -146,13 +146,10 @@ def make_mask(nums):
     return m
 
 candidates = []
-
 for _ in range(30):
     candidates.append(make_mask(random.sample(list(low_nums), 7)))
-
 for _ in range(40):
     candidates.append(make_mask(random.sample(range(37), 7)))
-
 candidates.append(make_mask(low_nums[:7]))
 
 # =========================================================
@@ -163,10 +160,12 @@ if st.button("🚀 Run Fast Optimization"):
 
     bar = st.progress(0)
     heap = []
+    counter = 0   # 🔑 tie-breaker
 
     for i, c in enumerate(candidates):
         b, s = fast_sa(c)
-        heapq.heappush(heap, (s, b))
+        heapq.heappush(heap, (s, counter, b))
+        counter += 1
         heap = heapq.nsmallest(20, heap)
         bar.progress((i + 1) / len(candidates))
 
@@ -175,7 +174,7 @@ if st.button("🚀 Run Fast Optimization"):
     # =====================================================
     results = []
 
-    for s, m in heap[:10]:
+    for s, _, m in heap[:10]:
         best_m, best_s = m, s
         for _ in range(2000):
             cand = neighbor(best_m)
