@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import pandas as pd
 import random
 import os
@@ -34,7 +34,8 @@ def load_tickets(file_path):
     tickets = []
     for v in df.iloc[:, 0]:
         ticket = set(int(x) for x in str(v).split(","))
-        tickets.append(ticket)
+        if len(ticket) == 7:
+            tickets.append(ticket)
     return tickets
 
 
@@ -67,21 +68,18 @@ def find_best_combinations(tickets, iterations):
 # ROUTES
 # ==============================
 @app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "message": "Upload an Excel file using POST /upload",
-        "format": "Column A: 7 numbers separated by commas"
-    })
+def index():
+    return render_template("index.html")
 
 
 @app.route("/upload", methods=["POST"])
-def upload_file():
+def upload():
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+        return "No file uploaded"
 
     file = request.files["file"]
     if file.filename == "":
-        return jsonify({"error": "Empty filename"}), 400
+        return "No selected file"
 
     path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
     file.save(path)
@@ -89,19 +87,11 @@ def upload_file():
     tickets = load_tickets(path)
     results = find_best_combinations(tickets, ITERATIONS)
 
-    output = []
-    for rank, (pay, combo) in enumerate(results, 1):
-        output.append({
-            "rank": rank,
-            "combination": combo,
-            "total_payout": pay
-        })
-
-    return jsonify({
-        "total_tickets": len(tickets),
-        "top_10_results": output
-    })
-
+    return render_template(
+        "index.html",
+        results=results,
+        total_tickets=len(tickets)
+    )
 
 # ==============================
 # RUN
