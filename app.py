@@ -1,14 +1,14 @@
 # ==========================================================
 # 🎯 LOWEST PAYOUT 7-NUMBER LOTTERY FINDER
-# Deterministic + Multiprocessing + Match Breakdown
 # Numbers: 1–37 | Ticket size: 7 | No repeats
+# Streamlit Cloud SAFE version
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
+import random
 import time
-from itertools import combinations
-from multiprocessing import Pool, cpu_count
+import io
 
 # ----------------------------
 # STREAMLIT UI
@@ -17,17 +17,11 @@ st.set_page_config(page_title="Lowest Payout Lottery Finder", layout="wide")
 st.title("🎯 Lowest Payout 7-Number Combination Finder")
 
 uploaded_file = st.file_uploader(
-    "📂 Upload Excel file (tickets in Column A)", type=["xlsx"]
+    "📂 Upload Excel file (tickets in Column A)",
+    type=["xlsx"]
 )
 
-TOP_RESULTS = st.selectbox("How many best combinations?", [10, 20, 50, 100], index=0)
-MAX_COMBOS = st.number_input(
-    "How many combinations to scan (deterministic)",
-    min_value=10_000,
-    max_value=500_000,
-    value=100_000,
-    step=10_000,
-)
+TOP_RESULTS = st.selectbox("How many results?", [10, 20, 50, 100], index=0)
 
 # ----------------------------
 # PAYOUT RULES
@@ -37,11 +31,13 @@ PAYOUTS = {
     4: 1000,
     5: 4000,
     6: 10000,
-    7: 100000,
+    7: 100000
 }
 
 NUMBERS = list(range(1, 38))
 COMBO_SIZE = 7
+MAX_ITERATIONS = 100_000   # SAFE for Streamlit Cloud
+TIME_LIMIT = 120           # seconds
 
 # ----------------------------
 # HELPERS
@@ -55,18 +51,17 @@ def parse_tickets(df):
     return tickets
 
 
-def evaluate_combo(args):
-    combo, tickets = args
-    payout = 0
-    breakdown = {3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
+def calculate_payout(combo, tickets):
+    total = 0
+    match_count = {3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
 
     for t in tickets:
         match = len(combo & t)
         if match >= 3:
-            payout += PAYOUTS[match]
-            breakdown[match] += 1
+            total += PAYOUTS[match]
+            match_count[match] += 1
 
-    return payout, tuple(sorted(combo)), breakdown
+    return total, match_count
 
 
 # ----------------------------
@@ -77,44 +72,54 @@ if uploaded_file:
     tickets = parse_tickets(df)
 
     st.success(f"Loaded {len(tickets)} tickets")
-    st.info("Running deterministic search with multiprocessing")
 
     start_time = time.time()
+    best_results = []
 
-    # Generate deterministic combinations (first N)
-    selected_combos = []
-    for i, c in enumerate(combinations(NUMBERS, COMBO_SIZE)):
-        if i >= MAX_COMBOS:
+    progress = st.progress(0)
+    status = st.empty()
+
+    for i in range(MAX_ITERATIONS):
+        if time.time() - start_time > TIME_LIMIT:
             break
-        selected_combos.append(set(c))
 
-    # Multiprocessing
-    with Pool(cpu_count()) as pool:
-        results = pool.map(
-            evaluate_combo, [(c, tickets) for c in selected_combos]
+        combo = set(random.sample(NUMBERS, COMBO_SIZE))
+        payout, breakdown = calculate_payout(combo, tickets)
+
+        best_results.append(
+            (
+                payout,
+                tuple(sorted(combo)),
+                breakdown
+            )
         )
 
-    # Sort and select best
-    results.sort(key=lambda x: x[0])
-    best = results[:TOP_RESULTS]
+        # Keep only best N
+        best_results = list(set(best_results))
+        best_results.sort(key=lambda x: x[0])
+        best_results = best_results[:TOP_RESULTS]
+
+        if i % 5000 == 0:
+            progress.progress(min(i / MAX_ITERATIONS, 1.0))
+            status.text(f"Checked {i:,} combinations")
+
+    progress.progress(1.0)
 
     # ----------------------------
     # RESULTS TABLE
     # ----------------------------
     rows = []
-    for idx, (payout, combo, breakdown) in enumerate(best, start=1):
-        rows.append(
-            {
-                "Rank": idx,
-                "Combination": ",".join(map(str, combo)),
-                "Total Payout (₹)": payout,
-                "3-Match Tickets": breakdown[3],
-                "4-Match Tickets": breakdown[4],
-                "5-Match Tickets": breakdown[5],
-                "6-Match Tickets": breakdown[6],
-                "7-Match Tickets": breakdown[7],
-            }
-        )
+    for idx, (payout, combo, breakdown) in enumerate(best_results, start=1):
+        rows.append({
+            "Rank": idx,
+            "Combination": ",".join(map(str, combo)),
+            "Total Payout (₹)": payout,
+            "3-Match Tickets": breakdown[3],
+            "4-Match Tickets": breakdown[4],
+            "5-Match Tickets": breakdown[5],
+            "6-Match Tickets": breakdown[6],
+            "7-Match Tickets": breakdown[7],
+        })
 
     result_df = pd.DataFrame(rows)
 
@@ -122,14 +127,17 @@ if uploaded_file:
     st.dataframe(result_df, use_container_width=True)
 
     # ----------------------------
-    # DOWNLOAD
+    # DOWNLOAD (FIXED)
     # ----------------------------
+    buffer = io.BytesIO()
+    result_df.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+
     st.download_button(
-        "⬇️ Download Results as Excel",
-        result_df.to_excel(index=False, engine="openpyxl"),
+        label="⬇️ Download Results as Excel",
+        data=buffer,
         file_name="lowest_payout_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.success(
-        f"Completed in {time.time() - start_time:.2f} seconds using {cpu_count()} CPU cores"
-    )
+    st.success(f"Completed in {time.time() - start_time:.2f} seconds")
