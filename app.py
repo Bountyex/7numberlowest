@@ -124,11 +124,7 @@ if uploaded_file:
     # ----------------------------
     # DOWNLOAD
     # ----------------------------
-    st.download_button(
-        "⬇️ Download Results as Excel",
-        result_df.to_excel(index=False, engine="openpyxl"),
-        file_name="lowest_payout_results.xlsx",
-    )
+    
 
     st.success(
         f"Completed in {time.time() - start_time:.2f} seconds using {cpu_count()} CPU cores"
