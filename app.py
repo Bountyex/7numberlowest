@@ -1,100 +1,135 @@
-from flask import Flask, request, jsonify, render_template
+# ==========================================================
+# 🎯 LOWEST PAYOUT 7-NUMBER LOTTERY FINDER
+# Deterministic + Multiprocessing + Match Breakdown
+# Numbers: 1–37 | Ticket size: 7 | No repeats
+# ==========================================================
+
+import streamlit as st
 import pandas as pd
-import random
-import os
+import time
+from itertools import combinations
+from multiprocessing import Pool, cpu_count
 
-# ==============================
-# APP SETUP
-# ==============================
-app = Flask(__name__)
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# ----------------------------
+# STREAMLIT UI
+# ----------------------------
+st.set_page_config(page_title="Lowest Payout Lottery Finder", layout="wide")
+st.title("🎯 Lowest Payout 7-Number Combination Finder")
 
-# ==============================
-# CONFIG
-# ==============================
-ITERATIONS = 100_000
+uploaded_file = st.file_uploader(
+    "📂 Upload Excel file (tickets in Column A)", type=["xlsx"]
+)
 
-PAYOUT = {
+TOP_RESULTS = st.selectbox("How many best combinations?", [10, 20, 50, 100], index=0)
+MAX_COMBOS = st.number_input(
+    "How many combinations to scan (deterministic)",
+    min_value=10_000,
+    max_value=500_000,
+    value=100_000,
+    step=10_000,
+)
+
+# ----------------------------
+# PAYOUT RULES
+# ----------------------------
+PAYOUTS = {
     3: 15,
     4: 1000,
     5: 4000,
     6: 10000,
-    7: 100000
+    7: 100000,
 }
 
 NUMBERS = list(range(1, 38))
+COMBO_SIZE = 7
 
-# ==============================
+# ----------------------------
 # HELPERS
-# ==============================
-def load_tickets(file_path):
-    df = pd.read_excel(file_path)
+# ----------------------------
+def parse_tickets(df):
     tickets = []
-    for v in df.iloc[:, 0]:
-        ticket = set(int(x) for x in str(v).split(","))
-        if len(ticket) == 7:
-            tickets.append(ticket)
+    for val in df.iloc[:, 0]:
+        nums = set(map(int, str(val).split(",")))
+        if len(nums) == 7:
+            tickets.append(nums)
     return tickets
 
 
-def total_payout(result, tickets):
-    total = 0
+def evaluate_combo(args):
+    combo, tickets = args
+    payout = 0
+    breakdown = {3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
+
     for t in tickets:
-        match = len(result & t)
+        match = len(combo & t)
         if match >= 3:
-            total += PAYOUT[match]
-    return total
+            payout += PAYOUTS[match]
+            breakdown[match] += 1
+
+    return payout, tuple(sorted(combo)), breakdown
 
 
-def find_best_combinations(tickets, iterations):
-    seen = set()
-    best = []
+# ----------------------------
+# MAIN LOGIC
+# ----------------------------
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    tickets = parse_tickets(df)
 
-    for _ in range(iterations):
-        combo = tuple(sorted(random.sample(NUMBERS, 7)))
-        if combo in seen:
-            continue
-        seen.add(combo)
+    st.success(f"Loaded {len(tickets)} tickets")
+    st.info("Running deterministic search with multiprocessing")
 
-        payout = total_payout(set(combo), tickets)
-        best.append((payout, combo))
+    start_time = time.time()
 
-    best.sort(key=lambda x: x[0])
-    return best[:10]
+    # Generate deterministic combinations (first N)
+    selected_combos = []
+    for i, c in enumerate(combinations(NUMBERS, COMBO_SIZE)):
+        if i >= MAX_COMBOS:
+            break
+        selected_combos.append(set(c))
 
-# ==============================
-# ROUTES
-# ==============================
-@app.route("/", methods=["GET"])
-def index():
-    return render_template("index.html")
+    # Multiprocessing
+    with Pool(cpu_count()) as pool:
+        results = pool.map(
+            evaluate_combo, [(c, tickets) for c in selected_combos]
+        )
 
+    # Sort and select best
+    results.sort(key=lambda x: x[0])
+    best = results[:TOP_RESULTS]
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    if "file" not in request.files:
-        return "No file uploaded"
+    # ----------------------------
+    # RESULTS TABLE
+    # ----------------------------
+    rows = []
+    for idx, (payout, combo, breakdown) in enumerate(best, start=1):
+        rows.append(
+            {
+                "Rank": idx,
+                "Combination": ",".join(map(str, combo)),
+                "Total Payout (₹)": payout,
+                "3-Match Tickets": breakdown[3],
+                "4-Match Tickets": breakdown[4],
+                "5-Match Tickets": breakdown[5],
+                "6-Match Tickets": breakdown[6],
+                "7-Match Tickets": breakdown[7],
+            }
+        )
 
-    file = request.files["file"]
-    if file.filename == "":
-        return "No selected file"
+    result_df = pd.DataFrame(rows)
 
-    path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
-    file.save(path)
+    st.subheader(f"🏆 Top {TOP_RESULTS} Lowest Payout Combinations")
+    st.dataframe(result_df, use_container_width=True)
 
-    tickets = load_tickets(path)
-    results = find_best_combinations(tickets, ITERATIONS)
-
-    return render_template(
-        "index.html",
-        results=results,
-        total_tickets=len(tickets)
+    # ----------------------------
+    # DOWNLOAD
+    # ----------------------------
+    st.download_button(
+        "⬇️ Download Results as Excel",
+        result_df.to_excel(index=False, engine="openpyxl"),
+        file_name="lowest_payout_results.xlsx",
     )
 
-# ==============================
-# RUN
-# ==============================
-if __name__ == "__main__":
-    app.run(debug=True)
+    st.success(
+        f"Completed in {time.time() - start_time:.2f} seconds using {cpu_count()} CPU cores"
+    )
