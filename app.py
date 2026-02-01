@@ -1,131 +1,75 @@
-# ==========================================================
-# 🎯 LOWEST PAYOUT 7-NUMBER LOTTERY FINDER
-# Deterministic + Multiprocessing + Match Breakdown
-# Numbers: 1–37 | Ticket size: 7 | No repeats
-# ==========================================================
-
 import streamlit as st
 import pandas as pd
-import time
-from itertools import combinations
-from multiprocessing import Pool, cpu_count
+import random
+import heapq
 
-# ----------------------------
-# STREAMLIT UI
-# ----------------------------
-st.set_page_config(page_title="Lowest Payout Lottery Finder", layout="wide")
-st.title("🎯 Lowest Payout 7-Number Combination Finder")
+st.set_page_config(page_title="Lottery Payout Minimizer", layout="wide")
 
-uploaded_file = st.file_uploader(
-    "📂 Upload Excel file (tickets in Column A)", type=["xlsx"]
-)
+st.title("🎯 Lottery Lowest Payout Finder")
+st.write("Upload your Excel file containing 7-number lottery tickets (1–37).")
 
-TOP_RESULTS = st.selectbox("How many best combinations?", [10, 20, 50, 100], index=0)
-MAX_COMBOS = st.number_input(
-    "How many combinations to scan (deterministic)",
-    min_value=10_000,
-    max_value=500_000,
-    value=100_000,
-    step=10_000,
-)
+uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-# ----------------------------
-# PAYOUT RULES
-# ----------------------------
+# Payout structure
 PAYOUTS = {
     3: 15,
     4: 1000,
     5: 4000,
     6: 10000,
-    7: 100000,
+    7: 100000
 }
 
-NUMBERS = list(range(1, 38))
-COMBO_SIZE = 7
+def calculate_payout(combo_set, tickets):
+    total = 0
+    for ticket in tickets:
+        matches = len(combo_set & ticket)
+        if matches >= 3:
+            total += PAYOUTS.get(matches, 0)
+    return total
 
-# ----------------------------
-# HELPERS
-# ----------------------------
-def parse_tickets(df):
-    tickets = []
-    for val in df.iloc[:, 0]:
-        nums = set(map(int, str(val).split(",")))
-        if len(nums) == 7:
-            tickets.append(nums)
-    return tickets
-
-
-def evaluate_combo(args):
-    combo, tickets = args
-    payout = 0
-    breakdown = {3: 0, 4: 0, 5: 0, 6: 0, 7: 0}
-
-    for t in tickets:
-        match = len(combo & t)
-        if match >= 3:
-            payout += PAYOUTS[match]
-            breakdown[match] += 1
-
-    return payout, tuple(sorted(combo)), breakdown
-
-
-# ----------------------------
-# MAIN LOGIC
-# ----------------------------
 if uploaded_file:
+
     df = pd.read_excel(uploaded_file)
-    tickets = parse_tickets(df)
 
-    st.success(f"Loaded {len(tickets)} tickets")
-    st.info("Running deterministic search with multiprocessing")
+    tickets = []
+    for ticket in df.iloc[:, 0].dropna():
+        nums = set(map(int, str(ticket).split(',')))
+        tickets.append(nums)
 
-    start_time = time.time()
+    st.success(f"Loaded {len(tickets)} tickets.")
 
-    # Generate deterministic combinations (first N)
-    selected_combos = []
-    for i, c in enumerate(combinations(NUMBERS, COMBO_SIZE)):
-        if i >= MAX_COMBOS:
-            break
-        selected_combos.append(set(c))
+    iterations = st.slider("Search Depth (Higher = Better Results)", 
+                           min_value=50000, 
+                           max_value=500000, 
+                           value=150000, 
+                           step=50000)
 
-    # Multiprocessing
-    with Pool(cpu_count()) as pool:
-        results = pool.map(
-            evaluate_combo, [(c, tickets) for c in selected_combos]
-        )
+    if st.button("Find Lowest Payout Combinations"):
 
-    # Sort and select best
-    results.sort(key=lambda x: x[0])
-    best = results[:TOP_RESULTS]
+        numbers = list(range(1, 38))
+        top_heap = []
+        seen = set()
 
-    # ----------------------------
-    # RESULTS TABLE
-    # ----------------------------
-    rows = []
-    for idx, (payout, combo, breakdown) in enumerate(best, start=1):
-        rows.append(
-            {
-                "Rank": idx,
-                "Combination": ",".join(map(str, combo)),
-                "Total Payout (₹)": payout,
-                "3-Match Tickets": breakdown[3],
-                "4-Match Tickets": breakdown[4],
-                "5-Match Tickets": breakdown[5],
-                "6-Match Tickets": breakdown[6],
-                "7-Match Tickets": breakdown[7],
-            }
-        )
+        with st.spinner("Searching... Please wait..."):
 
-    result_df = pd.DataFrame(rows)
+            for _ in range(iterations):
+                combo = tuple(sorted(random.sample(numbers, 7)))
 
-    st.subheader(f"🏆 Top {TOP_RESULTS} Lowest Payout Combinations")
-    st.dataframe(result_df, use_container_width=True)
+                if combo in seen:
+                    continue
+                seen.add(combo)
 
-    # ----------------------------
-    # DOWNLOAD
-    # ----------------------------
-    
+                payout = calculate_payout(set(combo), tickets)
 
-    st.success(
-        f"Completed in {time.time() - start_time:.2f} seconds using {cpu_count()} CPU cores"
-    )
+                if len(top_heap) < 10:
+                    heapq.heappush(top_heap, (-payout, combo))
+                else:
+                    if payout < -top_heap[0][0]:
+                        heapq.heappushpop(top_heap, (-payout, combo))
+
+        results = sorted([(-p, c) for p, c in top_heap], key=lambda x: x[0])
+
+        st.subheader("🏆 Top 10 Lowest Payout Combinations")
+
+        for payout, combo in results:
+            st.write(f"Combination: {combo} → Total Payout: ₹{payout:,}")
