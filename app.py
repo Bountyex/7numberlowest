@@ -1,75 +1,76 @@
+# ==========================================
+# LOTTERY LOWEST PAYOUT FINDER (Streamlit)
+# ==========================================
+
 import streamlit as st
 import pandas as pd
-import random
-import heapq
-
-st.set_page_config(page_title="Lottery Payout Minimizer", layout="wide")
+import itertools
+from collections import Counter
 
 st.title("🎯 Lottery Lowest Payout Finder")
-st.write("Upload your Excel file containing 7-number lottery tickets (1–37).")
+
+st.write("Upload Excel file (Column A = tickets like 1,2,3,4,5,6,7)")
 
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
-
-# Payout structure
-PAYOUTS = {
-    3: 15,
-    4: 1000,
-    5: 4000,
-    6: 10000,
-    7: 100000
-}
-
-def calculate_payout(combo_set, tickets):
-    total = 0
-    for ticket in tickets:
-        matches = len(combo_set & ticket)
-        if matches >= 3:
-            total += PAYOUTS.get(matches, 0)
-    return total
 
 if uploaded_file:
 
     df = pd.read_excel(uploaded_file)
 
-    tickets = []
-    for ticket in df.iloc[:, 0].dropna():
-        nums = set(map(int, str(ticket).split(',')))
-        tickets.append(nums)
+    tickets = df.iloc[:, 0].dropna().apply(
+        lambda x: set(map(int, str(x).split(",")))
+    ).tolist()
 
-    st.success(f"Loaded {len(tickets)} tickets.")
+    st.success(f"Total Tickets Loaded: {len(tickets)}")
 
-    iterations = st.slider("Search Depth (Higher = Better Results)", 
-                           min_value=50000, 
-                           max_value=500000, 
-                           value=150000, 
-                           step=50000)
+    payout_rules = {
+        3: 15,
+        4: 1000,
+        5: 4000,
+        6: 10000,
+        7: 100000
+    }
 
-    if st.button("Find Lowest Payout Combinations"):
+    def calculate_payout(comb_set):
+        total = 0
+        for ticket in tickets:
+            match = len(comb_set & ticket)
+            if match >= 3:
+                total += payout_rules.get(match, 0)
+        return total
 
-        numbers = list(range(1, 38))
-        top_heap = []
-        seen = set()
+    LEAST_NUMBERS_TO_USE = st.slider(
+        "Select search depth (higher = slower but deeper)",
+        min_value=15,
+        max_value=25,
+        value=18
+    )
 
-        with st.spinner("Searching... Please wait..."):
+    if st.button("🔍 Find Lowest Payout"):
 
-            for _ in range(iterations):
-                combo = tuple(sorted(random.sample(numbers, 7)))
+        with st.spinner("Calculating frequencies..."):
 
-                if combo in seen:
-                    continue
-                seen.add(combo)
+            freq = Counter()
+            for ticket in tickets:
+                for num in ticket:
+                    freq[num] += 1
 
-                payout = calculate_payout(set(combo), tickets)
+            least_numbers = [
+                num for num, _ in sorted(freq.items(), key=lambda x: x[1])[:LEAST_NUMBERS_TO_USE]
+            ]
 
-                if len(top_heap) < 10:
-                    heapq.heappush(top_heap, (-payout, combo))
-                else:
-                    if payout < -top_heap[0][0]:
-                        heapq.heappushpop(top_heap, (-payout, combo))
+            results = []
 
-        results = sorted([(-p, c) for p, c in top_heap], key=lambda x: x[0])
+            for comb in itertools.combinations(least_numbers, 7):
+                payout = calculate_payout(set(comb))
+                results.append((comb, payout))
 
-        st.subheader("🏆 Top 10 Lowest Payout Combinations")
+            results_sorted = sorted(results, key=lambda x: x[1])
 
-        for payout, combo in results:
-            st.write(f"Combination: {combo} → Total Payout: ₹{payout:,}")
+        st.subheader("🏆 Top 10 Lowest Payout Results")
+
+        for i in range(min(10, len(results_sorted))):
+            combo, payout = results_sorted[i]
+            st.write(f"{i+1}. {combo} → ₹{payout}")
+
+        st.success(f"✅ Lowest Payout Found: {results_sorted[0]}")
